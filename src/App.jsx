@@ -1,7 +1,8 @@
 import { useState, useRef } from "react";
 import Papa from "papaparse";
 import {
-  BarChart, Bar, LineChart, Line, XAxis, YAxis,
+  BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
+  AreaChart, Area, XAxis, YAxis,
   CartesianGrid, Tooltip, Legend, ResponsiveContainer
 } from "recharts";
 import jsPDF from "jspdf";
@@ -92,6 +93,8 @@ function App() {
             <select value={chartType} onChange={(e) => setChartType(e.target.value)} className="bg-slate-800 rounded px-2 py-1 text-sm">
               <option value="bar">Bar</option>
               <option value="line">Line</option>
+              <option value="pie">Pie</option>
+              <option value="area">Area</option>
             </select>
             <button onClick={exportPDF} className="bg-emerald-600 px-3 py-1.5 rounded text-sm">Export PDF</button>
             <button onClick={exportCSV} className="bg-sky-600 px-3 py-1.5 rounded text-sm">Export CSV</button>
@@ -112,7 +115,7 @@ function App() {
                 <Legend />
                 <Bar dataKey={yKey} fill="#6366f1" radius={[4, 4, 0, 0]} />
               </BarChart>
-            ) : (
+            ) : chartType === "line" ? (
               <LineChart data={data}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
                 <XAxis dataKey={xKey} stroke="#cbd5e1" />
@@ -121,6 +124,33 @@ function App() {
                 <Legend />
                 <Line type="monotone" dataKey={yKey} stroke="#22d3ee" strokeWidth={2} />
               </LineChart>
+            ) : chartType === "area" ? (
+              <AreaChart data={data}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                <XAxis dataKey={xKey} stroke="#cbd5e1" />
+                <YAxis stroke="#cbd5e1" />
+                <Tooltip contentStyle={{ background: "#1e293b", border: "none" }} />
+                <Legend />
+                <Area type="monotone" dataKey={yKey} stroke="#22d3ee" fill="#6366f1" fillOpacity={0.4} />
+              </AreaChart>
+            ) : (
+              <PieChart>
+                <Pie
+                  data={data}
+                  dataKey={yKey}
+                  nameKey={xKey}
+                  cx="50%"
+                  cy="50%"
+                  outerRadius={120}
+                  label
+                >
+                  {data.map((_, i) => (
+                    <Cell key={i} fill={["#6366f1", "#22d3ee", "#f472b6", "#facc15", "#34d399", "#f87171"][i % 6]} />
+                  ))}
+                </Pie>
+                <Tooltip contentStyle={{ background: "#1e293b", border: "none" }} />
+                <Legend />
+              </PieChart>
             )}
           </ResponsiveContainer>
 
