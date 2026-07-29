@@ -11,13 +11,14 @@ import { toPng } from "html-to-image";
 import jsPDF from "jspdf";
 
 const DEFAULT_PALETTE = ["#6366f1", "#22d3ee", "#f472b6", "#facc15", "#34d399", "#f87171", "#a78bfa", "#fb923c"];
+const CARD_BG = "#0f172a";
 
 const CHART_TYPES = [
-  "bar", "bar3d", "line", "pie", "pie3d", "doughnut", "area", "scatter", "radar",
+  "bar", "bar3d", "line", "pie", "pie3d", "doughnut", "doughnut3d", "area", "scatter", "radar",
   "heatmap", "funnel", "histogram", "bubble", "treemap", "waterfall", "gauge",
 ];
 
-const LABELS = { bar3d: "3D Bar", pie3d: "3D Pie" };
+const LABELS = { bar3d: "3D Bar", pie3d: "3D Pie", doughnut3d: "3D Doughnut" };
 
 const shadeColor = (hex, percent) => {
   const clean = hex.replace("#", "");
@@ -92,7 +93,7 @@ function App() {
   const resetColors = () => setColors(data.map((_, i) => DEFAULT_PALETTE[i % DEFAULT_PALETTE.length]));
 
   const captureDataUrl = async () => {
-    return await toPng(dashboardRef.current, { backgroundColor: "#0f172a", pixelRatio: 2 });
+    return await toPng(dashboardRef.current, { backgroundColor: CARD_BG, pixelRatio: 2 });
   };
 
   const exportPNG = async () => {
@@ -183,7 +184,6 @@ function App() {
   const tooltipStyle = { background: "#1e293b", border: "1px solid #334155", borderRadius: 8 };
   const colorAt = (i) => colors[i] || DEFAULT_PALETTE[i % DEFAULT_PALETTE.length];
 
-  // Solid extruded 3D bar — layered shadow blocks, no perspective/skew math to break
   const Bar3D = () => {
     const max = numericVals.length ? Math.max(...numericVals) : 1;
     const barW = 44;
@@ -224,8 +224,7 @@ function App() {
     );
   };
 
-  // Tilted-disc 3D pie — conic-gradient face + darker offset "rim" layer for depth
-  const Pie3D = () => {
+  const buildConicGradient = () => {
     const total = numericVals.reduce((a, b) => a + b, 0) || 1;
     let acc = 0;
     const stops = data.map((d, i) => {
@@ -235,23 +234,41 @@ function App() {
       const end = (acc / total) * 360;
       return `${colorAt(i)} ${start}deg ${end}deg`;
     }).join(", ");
-    const gradient = `conic-gradient(${stops})`;
+    return `conic-gradient(${stops})`;
+  };
+
+  // Tilted-disc 3D pie/doughnut — conic-gradient face + darker offset rim layer for depth
+  const Disc3D = ({ hollow }) => {
+    const gradient = buildConicGradient();
     const size = 260;
+    const holeSize = size * 0.42;
+
+    const Layer = ({ top, darker, shadow }) => (
+      <div style={{
+        position: "absolute", top, left: 0, width: size, height: size,
+        borderRadius: "50%", background: gradient,
+        transform: "scaleY(0.62)",
+        filter: darker ? "brightness(0.55)" : "none",
+        boxShadow: shadow ? "0 6px 16px rgba(0,0,0,0.4)" : "none",
+      }}>
+        {hollow && (
+          <div style={{
+            position: "absolute",
+            top: (size - holeSize) / 2,
+            left: (size - holeSize) / 2,
+            width: holeSize, height: holeSize,
+            borderRadius: "50%",
+            background: CARD_BG,
+          }} />
+        )}
+      </div>
+    );
 
     return (
       <div className="flex flex-col items-center py-10">
         <div style={{ position: "relative", width: size, height: size * 0.62 + 22 }}>
-          <div style={{
-            position: "absolute", top: 20, left: 0, width: size, height: size,
-            borderRadius: "50%", background: gradient,
-            transform: "scaleY(0.62)", filter: "brightness(0.55)",
-          }} />
-          <div style={{
-            position: "absolute", top: 0, left: 0, width: size, height: size,
-            borderRadius: "50%", background: gradient,
-            transform: "scaleY(0.62)",
-            boxShadow: "0 6px 16px rgba(0,0,0,0.4)",
-          }} />
+          <Layer top={20} darker shadow={false} />
+          <Layer top={0} darker={false} shadow />
         </div>
         <div className="flex flex-wrap gap-4 justify-center mt-6">
           {data.map((d, i) => (
@@ -524,7 +541,9 @@ function App() {
               ) : chartType === "bar3d" ? (
                 <Bar3D />
               ) : chartType === "pie3d" ? (
-                <Pie3D />
+                <Disc3D hollow={false} />
+              ) : chartType === "doughnut3d" ? (
+                <Disc3D hollow={true} />
               ) : (
                 <ResponsiveContainer width="100%" height={380}>
                   {renderChart()}
