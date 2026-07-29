@@ -13,9 +13,11 @@ import jsPDF from "jspdf";
 const DEFAULT_PALETTE = ["#6366f1", "#22d3ee", "#f472b6", "#facc15", "#34d399", "#f87171", "#a78bfa", "#fb923c"];
 
 const CHART_TYPES = [
-  "bar", "bar3d", "line", "pie", "doughnut", "area", "scatter", "radar",
+  "bar", "bar3d", "line", "pie", "pie3d", "doughnut", "area", "scatter", "radar",
   "heatmap", "funnel", "histogram", "bubble", "treemap", "waterfall", "gauge",
 ];
+
+const LABELS = { bar3d: "3D Bar", pie3d: "3D Pie" };
 
 const shadeColor = (hex, percent) => {
   const clean = hex.replace("#", "");
@@ -181,53 +183,84 @@ function App() {
   const tooltipStyle = { background: "#1e293b", border: "1px solid #334155", borderRadius: 8 };
   const colorAt = (i) => colors[i] || DEFAULT_PALETTE[i % DEFAULT_PALETTE.length];
 
+  // Solid extruded 3D bar — layered shadow blocks, no perspective/skew math to break
   const Bar3D = () => {
     const max = numericVals.length ? Math.max(...numericVals) : 1;
-    const barW = 56, barD = 28;
+    const barW = 44;
     return (
-      <div className="flex items-end gap-12 justify-center py-16 px-8 overflow-x-auto" style={{ perspective: 900 }}>
+      <div className="flex items-end gap-10 justify-center py-14 px-10 overflow-x-auto">
         {data.map((d, i) => {
           const val = Number(d[yKey]) || 0;
-          const h = max ? Math.round((val / max) * 180) + 30 : 30;
+          const h = max ? Math.round((val / max) * 220) + 24 : 24;
           const color = colorAt(i);
-          const topColor = shadeColor(color, 0.45);
-          const sideColor = shadeColor(color, -0.35);
+          const mid = shadeColor(color, -0.2);
+          const dark = shadeColor(color, -0.42);
+          const top = shadeColor(color, 0.35);
           return (
             <div key={i} className="flex flex-col items-center gap-3 shrink-0">
-              <div
-                style={{
-                  width: barW,
-                  height: h,
-                  position: "relative",
-                  transformStyle: "preserve-3d",
-                  transform: "rotateX(-18deg) rotateY(-28deg)",
-                }}
-              >
-                <div style={{
-                  position: "absolute", width: barW, height: h,
-                  background: color,
-                  transform: `translateZ(${barD / 2}px)`,
-                }} />
-                <div style={{
-                  position: "absolute", width: barD, height: h,
-                  background: sideColor,
-                  top: 0, left: barW - barD / 2,
-                  transform: `rotateY(90deg) translateZ(${barW - barD / 2}px)`,
-                  transformOrigin: "left center",
-                }} />
-                <div style={{
-                  position: "absolute", width: barW, height: barD,
-                  background: topColor,
-                  top: -barD / 2, left: 0,
-                  transform: `rotateX(90deg) translateZ(${h / 2}px)`,
-                  transformOrigin: "center top",
-                }} />
+              <div style={{ position: "relative", width: barW + 10, height: 250, display: "flex", alignItems: "flex-end" }}>
+                <div
+                  style={{
+                    width: barW,
+                    height: h,
+                    background: color,
+                    borderRadius: "3px 3px 0 0",
+                    boxShadow: `5px 5px 0 ${mid}, 10px 10px 0 ${dark}`,
+                    position: "relative",
+                  }}
+                >
+                  <div style={{
+                    position: "absolute", top: 0, left: 0, right: 0, height: 8,
+                    background: top, borderRadius: "3px 3px 0 0",
+                  }} />
+                </div>
               </div>
-              <span className="text-xs text-slate-400 mt-4">{String(d[xKey])}</span>
+              <span className="text-xs text-slate-400 mt-1">{String(d[xKey])}</span>
               <span className="text-xs text-slate-300 font-medium">{val}</span>
             </div>
           );
         })}
+      </div>
+    );
+  };
+
+  // Tilted-disc 3D pie — conic-gradient face + darker offset "rim" layer for depth
+  const Pie3D = () => {
+    const total = numericVals.reduce((a, b) => a + b, 0) || 1;
+    let acc = 0;
+    const stops = data.map((d, i) => {
+      const val = Number(d[yKey]) || 0;
+      const start = (acc / total) * 360;
+      acc += val;
+      const end = (acc / total) * 360;
+      return `${colorAt(i)} ${start}deg ${end}deg`;
+    }).join(", ");
+    const gradient = `conic-gradient(${stops})`;
+    const size = 260;
+
+    return (
+      <div className="flex flex-col items-center py-10">
+        <div style={{ position: "relative", width: size, height: size * 0.62 + 22 }}>
+          <div style={{
+            position: "absolute", top: 20, left: 0, width: size, height: size,
+            borderRadius: "50%", background: gradient,
+            transform: "scaleY(0.62)", filter: "brightness(0.55)",
+          }} />
+          <div style={{
+            position: "absolute", top: 0, left: 0, width: size, height: size,
+            borderRadius: "50%", background: gradient,
+            transform: "scaleY(0.62)",
+            boxShadow: "0 6px 16px rgba(0,0,0,0.4)",
+          }} />
+        </div>
+        <div className="flex flex-wrap gap-4 justify-center mt-6">
+          {data.map((d, i) => (
+            <div key={i} className="flex items-center gap-2 text-xs text-slate-300">
+              <span style={{ width: 10, height: 10, background: colorAt(i), display: "inline-block", borderRadius: 2 }} />
+              {String(d[xKey])}
+            </div>
+          ))}
+        </div>
       </div>
     );
   };
@@ -422,7 +455,7 @@ function App() {
                   <label className="text-xs text-slate-400">Chart Type</label>
                   <select value={chartType} onChange={(e) => setChartType(e.target.value)} className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm min-w-[140px]">
                     {CHART_TYPES.map((t) => (
-                      <option key={t} value={t}>{t === "bar3d" ? "3D Bar" : t.charAt(0).toUpperCase() + t.slice(1)}</option>
+                      <option key={t} value={t}>{LABELS[t] || (t.charAt(0).toUpperCase() + t.slice(1))}</option>
                     ))}
                   </select>
                 </div>
@@ -490,6 +523,8 @@ function App() {
                 </div>
               ) : chartType === "bar3d" ? (
                 <Bar3D />
+              ) : chartType === "pie3d" ? (
+                <Pie3D />
               ) : (
                 <ResponsiveContainer width="100%" height={380}>
                   {renderChart()}
