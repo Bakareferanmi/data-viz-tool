@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef } from "react";
 import Papa from "papaparse";
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
@@ -16,6 +16,20 @@ const CHART_TYPES = [
   "bar", "bar3d", "line", "pie", "doughnut", "area", "scatter", "radar",
   "heatmap", "funnel", "histogram", "bubble", "treemap", "waterfall", "gauge",
 ];
+
+const shadeColor = (hex, percent) => {
+  const clean = hex.replace("#", "");
+  const f = parseInt(clean, 16);
+  const t = percent < 0 ? 0 : 255;
+  const p = Math.abs(percent);
+  const R = f >> 16, G = (f >> 8) & 0x00ff, B = f & 0x0000ff;
+  const newColor =
+    0x1000000 +
+    (Math.round((t - R) * p) + R) * 0x10000 +
+    (Math.round((t - G) * p) + G) * 0x100 +
+    (Math.round((t - B) * p) + B);
+  return "#" + newColor.toString(16).slice(1);
+};
 
 function App() {
   const [data, setData] = useState([]);
@@ -72,13 +86,8 @@ function App() {
     });
   };
 
-  const setAllColors = (value) => {
-    setColors((prev) => prev.map(() => value));
-  };
-
-  const resetColors = () => {
-    setColors(data.map((_, i) => DEFAULT_PALETTE[i % DEFAULT_PALETTE.length]));
-  };
+  const setAllColors = (value) => setColors((prev) => prev.map(() => value));
+  const resetColors = () => setColors(data.map((_, i) => DEFAULT_PALETTE[i % DEFAULT_PALETTE.length]));
 
   const captureDataUrl = async () => {
     return await toPng(dashboardRef.current, { backgroundColor: "#0f172a", pixelRatio: 2 });
@@ -174,29 +183,47 @@ function App() {
 
   const Bar3D = () => {
     const max = numericVals.length ? Math.max(...numericVals) : 1;
+    const barW = 56, barD = 28;
     return (
-      <div className="flex items-end gap-6 justify-center py-10 px-4 overflow-x-auto" style={{ perspective: 700 }}>
+      <div className="flex items-end gap-12 justify-center py-16 px-8 overflow-x-auto" style={{ perspective: 900 }}>
         {data.map((d, i) => {
           const val = Number(d[yKey]) || 0;
-          const h = max ? (val / max) * 220 + 20 : 20;
+          const h = max ? Math.round((val / max) * 180) + 30 : 30;
           const color = colorAt(i);
+          const topColor = shadeColor(color, 0.45);
+          const sideColor = shadeColor(color, -0.35);
           return (
-            <div key={i} className="flex flex-col items-center gap-2 shrink-0">
-              <div style={{ height: 240, display: "flex", alignItems: "flex-end" }}>
-                <div
-                  style={{
-                    width: 46,
-                    height: h,
-                    background: color,
-                    position: "relative",
-                    transform: "rotateX(55deg) rotateZ(45deg)",
-                    transformStyle: "preserve-3d",
-                    boxShadow: "6px 6px 0px rgba(0,0,0,0.35), 12px 12px 20px rgba(0,0,0,0.25)",
-                    borderRadius: 3,
-                  }}
-                />
+            <div key={i} className="flex flex-col items-center gap-3 shrink-0">
+              <div
+                style={{
+                  width: barW,
+                  height: h,
+                  position: "relative",
+                  transformStyle: "preserve-3d",
+                  transform: "rotateX(-18deg) rotateY(-28deg)",
+                }}
+              >
+                <div style={{
+                  position: "absolute", width: barW, height: h,
+                  background: color,
+                  transform: `translateZ(${barD / 2}px)`,
+                }} />
+                <div style={{
+                  position: "absolute", width: barD, height: h,
+                  background: sideColor,
+                  top: 0, left: barW - barD / 2,
+                  transform: `rotateY(90deg) translateZ(${barW - barD / 2}px)`,
+                  transformOrigin: "left center",
+                }} />
+                <div style={{
+                  position: "absolute", width: barW, height: barD,
+                  background: topColor,
+                  top: -barD / 2, left: 0,
+                  transform: `rotateX(90deg) translateZ(${h / 2}px)`,
+                  transformOrigin: "center top",
+                }} />
               </div>
-              <span className="text-xs text-slate-400 mt-2">{String(d[xKey])}</span>
+              <span className="text-xs text-slate-400 mt-4">{String(d[xKey])}</span>
               <span className="text-xs text-slate-300 font-medium">{val}</span>
             </div>
           );
@@ -425,11 +452,7 @@ function App() {
                 <div className="mt-5 pt-5 border-t border-slate-800">
                   <div className="flex items-center gap-3 mb-4">
                     <label className="text-xs text-slate-400">Set all colors</label>
-                    <input
-                      type="color"
-                      onChange={(e) => setAllColors(e.target.value)}
-                      className="w-9 h-9 rounded cursor-pointer bg-transparent border border-slate-700"
-                    />
+                    <input type="color" onChange={(e) => setAllColors(e.target.value)} className="w-9 h-9 rounded cursor-pointer bg-transparent border border-slate-700" />
                     <button onClick={resetColors} className="text-xs text-slate-400 hover:text-slate-200 underline">
                       Reset to default palette
                     </button>
@@ -437,12 +460,7 @@ function App() {
                   <div className="flex flex-wrap gap-3">
                     {data.map((d, i) => (
                       <div key={i} className="flex items-center gap-2 bg-slate-800 rounded-lg px-2.5 py-1.5">
-                        <input
-                          type="color"
-                          value={colorAt(i)}
-                          onChange={(e) => setColorAt(i, e.target.value)}
-                          className="w-6 h-6 rounded cursor-pointer bg-transparent border border-slate-600"
-                        />
+                        <input type="color" value={colorAt(i)} onChange={(e) => setColorAt(i, e.target.value)} className="w-6 h-6 rounded cursor-pointer bg-transparent border border-slate-600" />
                         <span className="text-xs text-slate-300">{String(d[xKey])}</span>
                       </div>
                     ))}
@@ -463,11 +481,7 @@ function App() {
                     const val = Number(d[yKey]) || 0;
                     const intensity = heatmapMax ? val / heatmapMax : 0;
                     return (
-                      <div
-                        key={i}
-                        className="rounded-lg p-3 text-xs flex flex-col items-center justify-center"
-                        style={{ backgroundColor: colorAt(i), opacity: 0.3 + intensity * 0.7 }}
-                      >
+                      <div key={i} className="rounded-lg p-3 text-xs flex flex-col items-center justify-center" style={{ backgroundColor: colorAt(i), opacity: 0.3 + intensity * 0.7 }}>
                         <span className="font-medium text-slate-900">{String(d[xKey])}</span>
                         <span className="text-slate-900">{val}</span>
                       </div>
