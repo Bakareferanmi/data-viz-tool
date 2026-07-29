@@ -1,4 +1,4 @@
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import Papa from "papaparse";
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
@@ -10,10 +10,10 @@ import {
 import { toPng } from "html-to-image";
 import jsPDF from "jspdf";
 
-const PALETTE = ["#6366f1", "#22d3ee", "#f472b6", "#facc15", "#34d399", "#f87171", "#a78bfa", "#fb923c"];
+const DEFAULT_PALETTE = ["#6366f1", "#22d3ee", "#f472b6", "#facc15", "#34d399", "#f87171", "#a78bfa", "#fb923c"];
 
 const CHART_TYPES = [
-  "bar", "line", "pie", "doughnut", "area", "scatter", "radar",
+  "bar", "bar3d", "line", "pie", "doughnut", "area", "scatter", "radar",
   "heatmap", "funnel", "histogram", "bubble", "treemap", "waterfall", "gauge",
 ];
 
@@ -25,6 +25,8 @@ function App() {
   const [chartType, setChartType] = useState("bar");
   const [fileName, setFileName] = useState("");
   const [exportError, setExportError] = useState("");
+  const [colors, setColors] = useState([]);
+  const [showColors, setShowColors] = useState(false);
   const dashboardRef = useRef(null);
 
   const handleFile = (e) => {
@@ -54,6 +56,7 @@ function App() {
     const cols = Object.keys(rows[0]);
     setColumns(cols);
     setData(rows);
+    setColors(rows.map((_, i) => DEFAULT_PALETTE[i % DEFAULT_PALETTE.length]));
 
     const numericCol = cols.find((c) => typeof rows[0][c] === "number");
     const stringCol = cols.find((c) => typeof rows[0][c] === "string");
@@ -61,11 +64,24 @@ function App() {
     setYKey(numericCol || cols[1] || cols[0]);
   };
 
-  const captureDataUrl = async () => {
-    return await toPng(dashboardRef.current, {
-      backgroundColor: "#0f172a",
-      pixelRatio: 2,
+  const setColorAt = (i, value) => {
+    setColors((prev) => {
+      const next = [...prev];
+      next[i] = value;
+      return next;
     });
+  };
+
+  const setAllColors = (value) => {
+    setColors((prev) => prev.map(() => value));
+  };
+
+  const resetColors = () => {
+    setColors(data.map((_, i) => DEFAULT_PALETTE[i % DEFAULT_PALETTE.length]));
+  };
+
+  const captureDataUrl = async () => {
+    return await toPng(dashboardRef.current, { backgroundColor: "#0f172a", pixelRatio: 2 });
   };
 
   const exportPNG = async () => {
@@ -88,7 +104,6 @@ function App() {
       const img = new Image();
       img.src = dataUrl;
       await new Promise((resolve) => { img.onload = resolve; });
-
       const pdf = new jsPDF({ orientation: "landscape" });
       const width = pdf.internal.pageSize.getWidth();
       const height = (img.height * width) / img.width;
@@ -108,8 +123,6 @@ function App() {
     a.download = `${fileName || "export"}.csv`;
     a.click();
   };
-
-  // --- Derived data for the custom chart types ---
 
   const numericVals = data.map((d) => Number(d[yKey])).filter((n) => !isNaN(n));
 
@@ -135,7 +148,7 @@ function App() {
   const treemapData = data.map((d, i) => ({
     name: String(d[xKey]),
     size: Number(d[yKey]) || 1,
-    fill: PALETTE[i % PALETTE.length],
+    fill: colors[i] || DEFAULT_PALETTE[i % DEFAULT_PALETTE.length],
   }));
 
   const waterfallData = (() => {
@@ -148,9 +161,7 @@ function App() {
     });
   })();
 
-  const gaugeValue = numericVals.length
-    ? numericVals.reduce((a, b) => a + b, 0) / numericVals.length
-    : 0;
+  const gaugeValue = numericVals.length ? numericVals.reduce((a, b) => a + b, 0) / numericVals.length : 0;
   const gaugeMax = numericVals.length ? Math.max(...numericVals) * 1.2 : 100;
   const gaugeData = [
     { name: "value", value: gaugeValue },
@@ -158,8 +169,41 @@ function App() {
   ];
 
   const heatmapMax = numericVals.length ? Math.max(...numericVals) : 1;
-
   const tooltipStyle = { background: "#1e293b", border: "1px solid #334155", borderRadius: 8 };
+  const colorAt = (i) => colors[i] || DEFAULT_PALETTE[i % DEFAULT_PALETTE.length];
+
+  const Bar3D = () => {
+    const max = numericVals.length ? Math.max(...numericVals) : 1;
+    return (
+      <div className="flex items-end gap-6 justify-center py-10 px-4 overflow-x-auto" style={{ perspective: 700 }}>
+        {data.map((d, i) => {
+          const val = Number(d[yKey]) || 0;
+          const h = max ? (val / max) * 220 + 20 : 20;
+          const color = colorAt(i);
+          return (
+            <div key={i} className="flex flex-col items-center gap-2 shrink-0">
+              <div style={{ height: 240, display: "flex", alignItems: "flex-end" }}>
+                <div
+                  style={{
+                    width: 46,
+                    height: h,
+                    background: color,
+                    position: "relative",
+                    transform: "rotateX(55deg) rotateZ(45deg)",
+                    transformStyle: "preserve-3d",
+                    boxShadow: "6px 6px 0px rgba(0,0,0,0.35), 12px 12px 20px rgba(0,0,0,0.25)",
+                    borderRadius: 3,
+                  }}
+                />
+              </div>
+              <span className="text-xs text-slate-400 mt-2">{String(d[xKey])}</span>
+              <span className="text-xs text-slate-300 font-medium">{val}</span>
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
 
   const renderChart = () => {
     switch (chartType) {
@@ -172,7 +216,7 @@ function App() {
             <Tooltip contentStyle={tooltipStyle} />
             <Legend />
             <Bar dataKey={yKey} radius={[6, 6, 0, 0]}>
-              {data.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}
+              {data.map((_, i) => <Cell key={i} fill={colorAt(i)} />)}
             </Bar>
           </BarChart>
         );
@@ -184,7 +228,7 @@ function App() {
             <YAxis stroke="#94a3b8" fontSize={12} />
             <Tooltip contentStyle={tooltipStyle} />
             <Legend />
-            <Line type="monotone" dataKey={yKey} stroke="#22d3ee" strokeWidth={2.5} dot={{ r: 4, fill: "#22d3ee" }} />
+            <Line type="monotone" dataKey={yKey} stroke={colors[0] || "#22d3ee"} strokeWidth={2.5} dot={{ r: 4, fill: colors[0] || "#22d3ee" }} />
           </LineChart>
         );
       case "area":
@@ -195,14 +239,14 @@ function App() {
             <YAxis stroke="#94a3b8" fontSize={12} />
             <Tooltip contentStyle={tooltipStyle} />
             <Legend />
-            <Area type="monotone" dataKey={yKey} stroke="#f472b6" fill="#f472b6" fillOpacity={0.35} strokeWidth={2} />
+            <Area type="monotone" dataKey={yKey} stroke={colors[0] || "#f472b6"} fill={colors[0] || "#f472b6"} fillOpacity={0.35} strokeWidth={2} />
           </AreaChart>
         );
       case "pie":
         return (
           <PieChart>
             <Pie data={data} dataKey={yKey} nameKey={xKey} cx="50%" cy="50%" outerRadius={130} label>
-              {data.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}
+              {data.map((_, i) => <Cell key={i} fill={colorAt(i)} />)}
             </Pie>
             <Tooltip contentStyle={tooltipStyle} />
             <Legend />
@@ -212,7 +256,7 @@ function App() {
         return (
           <PieChart>
             <Pie data={data} dataKey={yKey} nameKey={xKey} cx="50%" cy="50%" innerRadius={70} outerRadius={130} label>
-              {data.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}
+              {data.map((_, i) => <Cell key={i} fill={colorAt(i)} />)}
             </Pie>
             <Tooltip contentStyle={tooltipStyle} />
             <Legend />
@@ -227,7 +271,7 @@ function App() {
             <Tooltip contentStyle={tooltipStyle} cursor={{ strokeDasharray: "3 3" }} />
             <Legend />
             <Scatter name={yKey} data={data}>
-              {data.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}
+              {data.map((_, i) => <Cell key={i} fill={colorAt(i)} />)}
             </Scatter>
           </ScatterChart>
         );
@@ -241,7 +285,7 @@ function App() {
             <Tooltip contentStyle={tooltipStyle} cursor={{ strokeDasharray: "3 3" }} />
             <Legend />
             <Scatter name={yKey} data={data}>
-              {data.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} fillOpacity={0.7} />)}
+              {data.map((_, i) => <Cell key={i} fill={colorAt(i)} fillOpacity={0.7} />)}
             </Scatter>
           </ScatterChart>
         );
@@ -253,7 +297,7 @@ function App() {
             <PolarRadiusAxis stroke="#334155" fontSize={11} />
             <Tooltip contentStyle={tooltipStyle} />
             <Legend />
-            <Radar name={yKey} dataKey={yKey} stroke="#34d399" fill="#34d399" fillOpacity={0.4} />
+            <Radar name={yKey} dataKey={yKey} stroke={colors[0] || "#34d399"} fill={colors[0] || "#34d399"} fillOpacity={0.4} />
           </RadarChart>
         );
       case "funnel":
@@ -262,7 +306,7 @@ function App() {
             <Tooltip contentStyle={tooltipStyle} />
             <Funnel dataKey={yKey} nameKey={xKey} data={data} isAnimationActive>
               <LabelList position="right" dataKey={xKey} fill="#e2e8f0" stroke="none" />
-              {data.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}
+              {data.map((_, i) => <Cell key={i} fill={colorAt(i)} />)}
             </Funnel>
           </FunnelChart>
         );
@@ -273,7 +317,7 @@ function App() {
             <XAxis dataKey="range" stroke="#94a3b8" fontSize={11} />
             <YAxis stroke="#94a3b8" fontSize={12} />
             <Tooltip contentStyle={tooltipStyle} />
-            <Bar dataKey="count" fill="#a78bfa" radius={[6, 6, 0, 0]} />
+            <Bar dataKey="count" fill={colors[0] || "#a78bfa"} radius={[6, 6, 0, 0]} />
           </BarChart>
         );
       case "treemap":
@@ -291,24 +335,15 @@ function App() {
             <Tooltip contentStyle={tooltipStyle} />
             <Bar dataKey="base" stackId="a" fill="transparent" />
             <Bar dataKey="value" stackId="a" radius={[4, 4, 0, 0]}>
-              {waterfallData.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}
+              {waterfallData.map((_, i) => <Cell key={i} fill={colorAt(i)} />)}
             </Bar>
           </ComposedChart>
         );
       case "gauge":
         return (
           <PieChart>
-            <Pie
-              data={gaugeData}
-              dataKey="value"
-              cx="50%"
-              cy="80%"
-              startAngle={180}
-              endAngle={0}
-              innerRadius={90}
-              outerRadius={140}
-            >
-              <Cell fill="#22d3ee" />
+            <Pie data={gaugeData} dataKey="value" cx="50%" cy="80%" startAngle={180} endAngle={0} innerRadius={90} outerRadius={140}>
+              <Cell fill={colors[0] || "#22d3ee"} />
               <Cell fill="#1e293b" />
             </Pie>
             <Tooltip contentStyle={tooltipStyle} />
@@ -360,10 +395,17 @@ function App() {
                   <label className="text-xs text-slate-400">Chart Type</label>
                   <select value={chartType} onChange={(e) => setChartType(e.target.value)} className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm min-w-[140px]">
                     {CHART_TYPES.map((t) => (
-                      <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>
+                      <option key={t} value={t}>{t === "bar3d" ? "3D Bar" : t.charAt(0).toUpperCase() + t.slice(1)}</option>
                     ))}
                   </select>
                 </div>
+
+                <button
+                  onClick={() => setShowColors((s) => !s)}
+                  className="border border-slate-700 hover:bg-slate-800 transition-colors text-sm font-medium px-4 py-2 rounded-lg"
+                >
+                  {showColors ? "Hide Colors" : "Customize Colors"}
+                </button>
 
                 <div className="flex gap-2 ml-auto flex-wrap">
                   <button onClick={exportCSV} className="border border-slate-700 hover:bg-slate-800 transition-colors text-sm font-medium px-4 py-2 rounded-lg">
@@ -377,8 +419,35 @@ function App() {
                   </button>
                 </div>
               </div>
-              {exportError && (
-                <p className="text-red-400 text-xs mt-3">{exportError}</p>
+              {exportError && <p className="text-red-400 text-xs mt-3">{exportError}</p>}
+
+              {showColors && (
+                <div className="mt-5 pt-5 border-t border-slate-800">
+                  <div className="flex items-center gap-3 mb-4">
+                    <label className="text-xs text-slate-400">Set all colors</label>
+                    <input
+                      type="color"
+                      onChange={(e) => setAllColors(e.target.value)}
+                      className="w-9 h-9 rounded cursor-pointer bg-transparent border border-slate-700"
+                    />
+                    <button onClick={resetColors} className="text-xs text-slate-400 hover:text-slate-200 underline">
+                      Reset to default palette
+                    </button>
+                  </div>
+                  <div className="flex flex-wrap gap-3">
+                    {data.map((d, i) => (
+                      <div key={i} className="flex items-center gap-2 bg-slate-800 rounded-lg px-2.5 py-1.5">
+                        <input
+                          type="color"
+                          value={colorAt(i)}
+                          onChange={(e) => setColorAt(i, e.target.value)}
+                          className="w-6 h-6 rounded cursor-pointer bg-transparent border border-slate-600"
+                        />
+                        <span className="text-xs text-slate-300">{String(d[xKey])}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
               )}
             </div>
 
@@ -397,14 +466,16 @@ function App() {
                       <div
                         key={i}
                         className="rounded-lg p-3 text-xs flex flex-col items-center justify-center"
-                        style={{ backgroundColor: `rgba(99,102,241,${0.15 + intensity * 0.85})` }}
+                        style={{ backgroundColor: colorAt(i), opacity: 0.3 + intensity * 0.7 }}
                       >
-                        <span className="font-medium">{String(d[xKey])}</span>
-                        <span className="text-slate-200">{val}</span>
+                        <span className="font-medium text-slate-900">{String(d[xKey])}</span>
+                        <span className="text-slate-900">{val}</span>
                       </div>
                     );
                   })}
                 </div>
+              ) : chartType === "bar3d" ? (
+                <Bar3D />
               ) : (
                 <ResponsiveContainer width="100%" height={380}>
                   {renderChart()}
