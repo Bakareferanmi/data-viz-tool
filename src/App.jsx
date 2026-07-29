@@ -2,11 +2,14 @@ import { useState, useRef } from "react";
 import Papa from "papaparse";
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
-  AreaChart, Area, XAxis, YAxis,
-  CartesianGrid, Tooltip, Legend, ResponsiveContainer
+  AreaChart, Area, ScatterChart, Scatter,
+  RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
+  XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
 } from "recharts";
 import jsPDF from "jspdf";
 import html2canvas from "html2canvas";
+
+const PALETTE = ["#6366f1", "#22d3ee", "#f472b6", "#facc15", "#34d399", "#f87171", "#a78bfa", "#fb923c"];
 
 function App() {
   const [data, setData] = useState([]);
@@ -51,14 +54,26 @@ function App() {
     setYKey(numericCol || cols[1] || cols[0]);
   };
 
+  const captureCanvas = async () => {
+    return await html2canvas(dashboardRef.current, { scale: 2, backgroundColor: "#0f172a" });
+  };
+
   const exportPDF = async () => {
-    const canvas = await html2canvas(dashboardRef.current, { scale: 2 });
+    const canvas = await captureCanvas();
     const imgData = canvas.toDataURL("image/png");
     const pdf = new jsPDF({ orientation: "landscape" });
     const width = pdf.internal.pageSize.getWidth();
     const height = (canvas.height * width) / canvas.width;
     pdf.addImage(imgData, "PNG", 0, 0, width, height);
     pdf.save(`${fileName || "report"}.pdf`);
+  };
+
+  const exportPNG = async () => {
+    const canvas = await captureCanvas();
+    const link = document.createElement("a");
+    link.download = `${fileName || "report"}.png`;
+    link.href = canvas.toDataURL("image/png");
+    link.click();
   };
 
   const exportCSV = () => {
@@ -89,7 +104,6 @@ function App() {
 
       <main className="max-w-6xl mx-auto px-6 py-8">
         {columns.length === 0 ? (
-          /* Empty state */
           <div className="border border-dashed border-slate-700 rounded-2xl py-24 flex flex-col items-center justify-center text-center">
             <p className="text-slate-300 font-medium mb-1">No data loaded yet</p>
             <p className="text-slate-500 text-sm">Upload a CSV or JSON file to generate your first chart</p>
@@ -118,12 +132,17 @@ function App() {
                     <option value="line">Line</option>
                     <option value="pie">Pie</option>
                     <option value="area">Area</option>
+                    <option value="scatter">Scatter</option>
+                    <option value="radar">Radar</option>
                   </select>
                 </div>
 
-                <div className="flex gap-2 ml-auto">
+                <div className="flex gap-2 ml-auto flex-wrap">
                   <button onClick={exportCSV} className="border border-slate-700 hover:bg-slate-800 transition-colors text-sm font-medium px-4 py-2 rounded-lg">
                     Export CSV
+                  </button>
+                  <button onClick={exportPNG} className="bg-sky-600 hover:bg-sky-500 transition-colors text-sm font-medium px-4 py-2 rounded-lg">
+                    Export PNG
                   </button>
                   <button onClick={exportPDF} className="bg-emerald-600 hover:bg-emerald-500 transition-colors text-sm font-medium px-4 py-2 rounded-lg">
                     Export PDF
@@ -139,7 +158,7 @@ function App() {
                 <span className="text-xs text-slate-500">{data.length} rows</span>
               </div>
 
-              <ResponsiveContainer width="100%" height={360}>
+              <ResponsiveContainer width="100%" height={380}>
                 {chartType === "bar" ? (
                   <BarChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
@@ -147,7 +166,9 @@ function App() {
                     <YAxis stroke="#94a3b8" fontSize={12} />
                     <Tooltip contentStyle={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 8 }} />
                     <Legend />
-                    <Bar dataKey={yKey} fill="#6366f1" radius={[6, 6, 0, 0]} />
+                    <Bar dataKey={yKey} radius={[6, 6, 0, 0]}>
+                      {data.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}
+                    </Bar>
                   </BarChart>
                 ) : chartType === "line" ? (
                   <LineChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
@@ -156,7 +177,7 @@ function App() {
                     <YAxis stroke="#94a3b8" fontSize={12} />
                     <Tooltip contentStyle={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 8 }} />
                     <Legend />
-                    <Line type="monotone" dataKey={yKey} stroke="#22d3ee" strokeWidth={2.5} dot={{ r: 3 }} />
+                    <Line type="monotone" dataKey={yKey} stroke="#22d3ee" strokeWidth={2.5} dot={{ r: 4, fill: "#22d3ee" }} />
                   </LineChart>
                 ) : chartType === "area" ? (
                   <AreaChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
@@ -165,14 +186,32 @@ function App() {
                     <YAxis stroke="#94a3b8" fontSize={12} />
                     <Tooltip contentStyle={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 8 }} />
                     <Legend />
-                    <Area type="monotone" dataKey={yKey} stroke="#22d3ee" fill="#6366f1" fillOpacity={0.35} strokeWidth={2} />
+                    <Area type="monotone" dataKey={yKey} stroke="#f472b6" fill="#f472b6" fillOpacity={0.35} strokeWidth={2} />
                   </AreaChart>
+                ) : chartType === "scatter" ? (
+                  <ScatterChart margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+                    <XAxis dataKey={xKey} stroke="#94a3b8" fontSize={12} name={xKey} />
+                    <YAxis dataKey={yKey} stroke="#94a3b8" fontSize={12} name={yKey} />
+                    <Tooltip contentStyle={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 8 }} cursor={{ strokeDasharray: "3 3" }} />
+                    <Legend />
+                    <Scatter name={yKey} data={data} fill="#facc15">
+                      {data.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}
+                    </Scatter>
+                  </ScatterChart>
+                ) : chartType === "radar" ? (
+                  <RadarChart data={data} margin={{ top: 10, right: 30, left: 30, bottom: 0 }}>
+                    <PolarGrid stroke="#1e293b" />
+                    <PolarAngleAxis dataKey={xKey} stroke="#94a3b8" fontSize={12} />
+                    <PolarRadiusAxis stroke="#334155" fontSize={11} />
+                    <Tooltip contentStyle={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 8 }} />
+                    <Legend />
+                    <Radar name={yKey} dataKey={yKey} stroke="#34d399" fill="#34d399" fillOpacity={0.4} />
+                  </RadarChart>
                 ) : (
                   <PieChart>
                     <Pie data={data} dataKey={yKey} nameKey={xKey} cx="50%" cy="50%" outerRadius={130} label>
-                      {data.map((_, i) => (
-                        <Cell key={i} fill={["#6366f1", "#22d3ee", "#f472b6", "#facc15", "#34d399", "#f87171"][i % 6]} />
-                      ))}
+                      {data.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}
                     </Pie>
                     <Tooltip contentStyle={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 8 }} />
                     <Legend />
@@ -190,7 +229,7 @@ function App() {
                       ))}
                     </tr>
                   </thead>
-                  <tbody className="max-h-64">
+                  <tbody>
                     {data.slice(0, 20).map((row, i) => (
                       <tr key={i} className="border-t border-slate-800 hover:bg-slate-800/40 transition-colors">
                         {columns.map((c) => (
