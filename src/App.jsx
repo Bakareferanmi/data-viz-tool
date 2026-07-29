@@ -2,14 +2,20 @@ import { useState, useRef } from "react";
 import Papa from "papaparse";
 import {
   BarChart, Bar, LineChart, Line, PieChart, Pie, Cell,
-  AreaChart, Area, ScatterChart, Scatter,
+  AreaChart, Area, ScatterChart, Scatter, ZAxis,
   RadarChart, Radar, PolarGrid, PolarAngleAxis, PolarRadiusAxis,
+  FunnelChart, Funnel, LabelList, Treemap, ComposedChart,
   XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
 } from "recharts";
+import { toPng } from "html-to-image";
 import jsPDF from "jspdf";
-import html2canvas from "html2canvas";
 
 const PALETTE = ["#6366f1", "#22d3ee", "#f472b6", "#facc15", "#34d399", "#f87171", "#a78bfa", "#fb923c"];
+
+const CHART_TYPES = [
+  "bar", "line", "pie", "doughnut", "area", "scatter", "radar",
+  "heatmap", "funnel", "histogram", "bubble", "treemap", "waterfall", "gauge",
+];
 
 function App() {
   const [data, setData] = useState([]);
@@ -18,6 +24,7 @@ function App() {
   const [yKey, setYKey] = useState("");
   const [chartType, setChartType] = useState("bar");
   const [fileName, setFileName] = useState("");
+  const [exportError, setExportError] = useState("");
   const dashboardRef = useRef(null);
 
   const handleFile = (e) => {
@@ -54,26 +61,42 @@ function App() {
     setYKey(numericCol || cols[1] || cols[0]);
   };
 
-  const captureCanvas = async () => {
-    return await html2canvas(dashboardRef.current, { scale: 2, backgroundColor: "#0f172a" });
-  };
-
-  const exportPDF = async () => {
-    const canvas = await captureCanvas();
-    const imgData = canvas.toDataURL("image/png");
-    const pdf = new jsPDF({ orientation: "landscape" });
-    const width = pdf.internal.pageSize.getWidth();
-    const height = (canvas.height * width) / canvas.width;
-    pdf.addImage(imgData, "PNG", 0, 0, width, height);
-    pdf.save(`${fileName || "report"}.pdf`);
+  const captureDataUrl = async () => {
+    return await toPng(dashboardRef.current, {
+      backgroundColor: "#0f172a",
+      pixelRatio: 2,
+    });
   };
 
   const exportPNG = async () => {
-    const canvas = await captureCanvas();
-    const link = document.createElement("a");
-    link.download = `${fileName || "report"}.png`;
-    link.href = canvas.toDataURL("image/png");
-    link.click();
+    setExportError("");
+    try {
+      const dataUrl = await captureDataUrl();
+      const link = document.createElement("a");
+      link.download = `${fileName || "report"}.png`;
+      link.href = dataUrl;
+      link.click();
+    } catch (err) {
+      setExportError("PNG export failed: " + err.message);
+    }
+  };
+
+  const exportPDF = async () => {
+    setExportError("");
+    try {
+      const dataUrl = await captureDataUrl();
+      const img = new Image();
+      img.src = dataUrl;
+      await new Promise((resolve) => { img.onload = resolve; });
+
+      const pdf = new jsPDF({ orientation: "landscape" });
+      const width = pdf.internal.pageSize.getWidth();
+      const height = (img.height * width) / img.width;
+      pdf.addImage(dataUrl, "PNG", 0, 0, width, height);
+      pdf.save(`${fileName || "report"}.pdf`);
+    } catch (err) {
+      setExportError("PDF export failed: " + err.message);
+    }
   };
 
   const exportCSV = () => {
@@ -86,9 +109,218 @@ function App() {
     a.click();
   };
 
+  // --- Derived data for the custom chart types ---
+
+  const numericVals = data.map((d) => Number(d[yKey])).filter((n) => !isNaN(n));
+
+  const histogramData = (() => {
+    if (!numericVals.length) return [];
+    const min = Math.min(...numericVals);
+    const max = Math.max(...numericVals);
+    const bins = 6;
+    const size = (max - min) / bins || 1;
+    const buckets = Array.from({ length: bins }, (_, i) => ({
+      range: `${(min + i * size).toFixed(1)}-${(min + (i + 1) * size).toFixed(1)}`,
+      count: 0,
+    }));
+    numericVals.forEach((v) => {
+      let idx = Math.floor((v - min) / size);
+      if (idx >= bins) idx = bins - 1;
+      if (idx < 0) idx = 0;
+      buckets[idx].count += 1;
+    });
+    return buckets;
+  })();
+
+  const treemapData = data.map((d, i) => ({
+    name: String(d[xKey]),
+    size: Number(d[yKey]) || 1,
+    fill: PALETTE[i % PALETTE.length],
+  }));
+
+  const waterfallData = (() => {
+    let cumulative = 0;
+    return data.map((d) => {
+      const val = Number(d[yKey]) || 0;
+      const base = cumulative;
+      cumulative += val;
+      return { name: String(d[xKey]), base, value: val };
+    });
+  })();
+
+  const gaugeValue = numericVals.length
+    ? numericVals.reduce((a, b) => a + b, 0) / numericVals.length
+    : 0;
+  const gaugeMax = numericVals.length ? Math.max(...numericVals) * 1.2 : 100;
+  const gaugeData = [
+    { name: "value", value: gaugeValue },
+    { name: "remaining", value: Math.max(gaugeMax - gaugeValue, 0) },
+  ];
+
+  const heatmapMax = numericVals.length ? Math.max(...numericVals) : 1;
+
+  const tooltipStyle = { background: "#1e293b", border: "1px solid #334155", borderRadius: 8 };
+
+  const renderChart = () => {
+    switch (chartType) {
+      case "bar":
+        return (
+          <BarChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+            <XAxis dataKey={xKey} stroke="#94a3b8" fontSize={12} />
+            <YAxis stroke="#94a3b8" fontSize={12} />
+            <Tooltip contentStyle={tooltipStyle} />
+            <Legend />
+            <Bar dataKey={yKey} radius={[6, 6, 0, 0]}>
+              {data.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}
+            </Bar>
+          </BarChart>
+        );
+      case "line":
+        return (
+          <LineChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+            <XAxis dataKey={xKey} stroke="#94a3b8" fontSize={12} />
+            <YAxis stroke="#94a3b8" fontSize={12} />
+            <Tooltip contentStyle={tooltipStyle} />
+            <Legend />
+            <Line type="monotone" dataKey={yKey} stroke="#22d3ee" strokeWidth={2.5} dot={{ r: 4, fill: "#22d3ee" }} />
+          </LineChart>
+        );
+      case "area":
+        return (
+          <AreaChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+            <XAxis dataKey={xKey} stroke="#94a3b8" fontSize={12} />
+            <YAxis stroke="#94a3b8" fontSize={12} />
+            <Tooltip contentStyle={tooltipStyle} />
+            <Legend />
+            <Area type="monotone" dataKey={yKey} stroke="#f472b6" fill="#f472b6" fillOpacity={0.35} strokeWidth={2} />
+          </AreaChart>
+        );
+      case "pie":
+        return (
+          <PieChart>
+            <Pie data={data} dataKey={yKey} nameKey={xKey} cx="50%" cy="50%" outerRadius={130} label>
+              {data.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}
+            </Pie>
+            <Tooltip contentStyle={tooltipStyle} />
+            <Legend />
+          </PieChart>
+        );
+      case "doughnut":
+        return (
+          <PieChart>
+            <Pie data={data} dataKey={yKey} nameKey={xKey} cx="50%" cy="50%" innerRadius={70} outerRadius={130} label>
+              {data.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}
+            </Pie>
+            <Tooltip contentStyle={tooltipStyle} />
+            <Legend />
+          </PieChart>
+        );
+      case "scatter":
+        return (
+          <ScatterChart margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+            <XAxis dataKey={xKey} stroke="#94a3b8" fontSize={12} name={xKey} />
+            <YAxis dataKey={yKey} stroke="#94a3b8" fontSize={12} name={yKey} />
+            <Tooltip contentStyle={tooltipStyle} cursor={{ strokeDasharray: "3 3" }} />
+            <Legend />
+            <Scatter name={yKey} data={data}>
+              {data.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}
+            </Scatter>
+          </ScatterChart>
+        );
+      case "bubble":
+        return (
+          <ScatterChart margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+            <XAxis dataKey={xKey} stroke="#94a3b8" fontSize={12} name={xKey} />
+            <YAxis dataKey={yKey} stroke="#94a3b8" fontSize={12} name={yKey} />
+            <ZAxis dataKey={yKey} range={[80, 500]} name="size" />
+            <Tooltip contentStyle={tooltipStyle} cursor={{ strokeDasharray: "3 3" }} />
+            <Legend />
+            <Scatter name={yKey} data={data}>
+              {data.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} fillOpacity={0.7} />)}
+            </Scatter>
+          </ScatterChart>
+        );
+      case "radar":
+        return (
+          <RadarChart data={data} margin={{ top: 10, right: 30, left: 30, bottom: 0 }}>
+            <PolarGrid stroke="#1e293b" />
+            <PolarAngleAxis dataKey={xKey} stroke="#94a3b8" fontSize={12} />
+            <PolarRadiusAxis stroke="#334155" fontSize={11} />
+            <Tooltip contentStyle={tooltipStyle} />
+            <Legend />
+            <Radar name={yKey} dataKey={yKey} stroke="#34d399" fill="#34d399" fillOpacity={0.4} />
+          </RadarChart>
+        );
+      case "funnel":
+        return (
+          <FunnelChart>
+            <Tooltip contentStyle={tooltipStyle} />
+            <Funnel dataKey={yKey} nameKey={xKey} data={data} isAnimationActive>
+              <LabelList position="right" dataKey={xKey} fill="#e2e8f0" stroke="none" />
+              {data.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}
+            </Funnel>
+          </FunnelChart>
+        );
+      case "histogram":
+        return (
+          <BarChart data={histogramData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+            <XAxis dataKey="range" stroke="#94a3b8" fontSize={11} />
+            <YAxis stroke="#94a3b8" fontSize={12} />
+            <Tooltip contentStyle={tooltipStyle} />
+            <Bar dataKey="count" fill="#a78bfa" radius={[6, 6, 0, 0]} />
+          </BarChart>
+        );
+      case "treemap":
+        return (
+          <Treemap data={treemapData} dataKey="size" stroke="#0f172a" fill="#6366f1">
+            <Tooltip contentStyle={tooltipStyle} />
+          </Treemap>
+        );
+      case "waterfall":
+        return (
+          <ComposedChart data={waterfallData} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
+            <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
+            <XAxis dataKey="name" stroke="#94a3b8" fontSize={12} />
+            <YAxis stroke="#94a3b8" fontSize={12} />
+            <Tooltip contentStyle={tooltipStyle} />
+            <Bar dataKey="base" stackId="a" fill="transparent" />
+            <Bar dataKey="value" stackId="a" radius={[4, 4, 0, 0]}>
+              {waterfallData.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}
+            </Bar>
+          </ComposedChart>
+        );
+      case "gauge":
+        return (
+          <PieChart>
+            <Pie
+              data={gaugeData}
+              dataKey="value"
+              cx="50%"
+              cy="80%"
+              startAngle={180}
+              endAngle={0}
+              innerRadius={90}
+              outerRadius={140}
+            >
+              <Cell fill="#22d3ee" />
+              <Cell fill="#1e293b" />
+            </Pie>
+            <Tooltip contentStyle={tooltipStyle} />
+          </PieChart>
+        );
+      default:
+        return null;
+    }
+  };
+
   return (
     <div className="min-h-screen bg-slate-950 text-slate-100">
-      {/* Header */}
       <header className="border-b border-slate-800 bg-slate-900/60 backdrop-blur sticky top-0 z-10">
         <div className="max-w-6xl mx-auto px-6 py-5 flex items-center justify-between">
           <div>
@@ -110,7 +342,6 @@ function App() {
           </div>
         ) : (
           <div className="space-y-6">
-            {/* Controls card */}
             <div className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
               <div className="flex flex-wrap items-end gap-4">
                 <div className="flex flex-col gap-1">
@@ -127,13 +358,10 @@ function App() {
                 </div>
                 <div className="flex flex-col gap-1">
                   <label className="text-xs text-slate-400">Chart Type</label>
-                  <select value={chartType} onChange={(e) => setChartType(e.target.value)} className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm min-w-[120px]">
-                    <option value="bar">Bar</option>
-                    <option value="line">Line</option>
-                    <option value="pie">Pie</option>
-                    <option value="area">Area</option>
-                    <option value="scatter">Scatter</option>
-                    <option value="radar">Radar</option>
+                  <select value={chartType} onChange={(e) => setChartType(e.target.value)} className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm min-w-[140px]">
+                    {CHART_TYPES.map((t) => (
+                      <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>
+                    ))}
                   </select>
                 </div>
 
@@ -149,77 +377,40 @@ function App() {
                   </button>
                 </div>
               </div>
+              {exportError && (
+                <p className="text-red-400 text-xs mt-3">{exportError}</p>
+              )}
             </div>
 
-            {/* Dashboard card */}
             <div ref={dashboardRef} className="bg-slate-900 border border-slate-800 rounded-2xl p-6">
               <div className="flex items-center justify-between mb-5">
                 <h2 className="text-base font-semibold">{fileName}</h2>
                 <span className="text-xs text-slate-500">{data.length} rows</span>
               </div>
 
-              <ResponsiveContainer width="100%" height={380}>
-                {chartType === "bar" ? (
-                  <BarChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                    <XAxis dataKey={xKey} stroke="#94a3b8" fontSize={12} />
-                    <YAxis stroke="#94a3b8" fontSize={12} />
-                    <Tooltip contentStyle={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 8 }} />
-                    <Legend />
-                    <Bar dataKey={yKey} radius={[6, 6, 0, 0]}>
-                      {data.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}
-                    </Bar>
-                  </BarChart>
-                ) : chartType === "line" ? (
-                  <LineChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                    <XAxis dataKey={xKey} stroke="#94a3b8" fontSize={12} />
-                    <YAxis stroke="#94a3b8" fontSize={12} />
-                    <Tooltip contentStyle={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 8 }} />
-                    <Legend />
-                    <Line type="monotone" dataKey={yKey} stroke="#22d3ee" strokeWidth={2.5} dot={{ r: 4, fill: "#22d3ee" }} />
-                  </LineChart>
-                ) : chartType === "area" ? (
-                  <AreaChart data={data} margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                    <XAxis dataKey={xKey} stroke="#94a3b8" fontSize={12} />
-                    <YAxis stroke="#94a3b8" fontSize={12} />
-                    <Tooltip contentStyle={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 8 }} />
-                    <Legend />
-                    <Area type="monotone" dataKey={yKey} stroke="#f472b6" fill="#f472b6" fillOpacity={0.35} strokeWidth={2} />
-                  </AreaChart>
-                ) : chartType === "scatter" ? (
-                  <ScatterChart margin={{ top: 10, right: 10, left: 0, bottom: 0 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" />
-                    <XAxis dataKey={xKey} stroke="#94a3b8" fontSize={12} name={xKey} />
-                    <YAxis dataKey={yKey} stroke="#94a3b8" fontSize={12} name={yKey} />
-                    <Tooltip contentStyle={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 8 }} cursor={{ strokeDasharray: "3 3" }} />
-                    <Legend />
-                    <Scatter name={yKey} data={data} fill="#facc15">
-                      {data.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}
-                    </Scatter>
-                  </ScatterChart>
-                ) : chartType === "radar" ? (
-                  <RadarChart data={data} margin={{ top: 10, right: 30, left: 30, bottom: 0 }}>
-                    <PolarGrid stroke="#1e293b" />
-                    <PolarAngleAxis dataKey={xKey} stroke="#94a3b8" fontSize={12} />
-                    <PolarRadiusAxis stroke="#334155" fontSize={11} />
-                    <Tooltip contentStyle={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 8 }} />
-                    <Legend />
-                    <Radar name={yKey} dataKey={yKey} stroke="#34d399" fill="#34d399" fillOpacity={0.4} />
-                  </RadarChart>
-                ) : (
-                  <PieChart>
-                    <Pie data={data} dataKey={yKey} nameKey={xKey} cx="50%" cy="50%" outerRadius={130} label>
-                      {data.map((_, i) => <Cell key={i} fill={PALETTE[i % PALETTE.length]} />)}
-                    </Pie>
-                    <Tooltip contentStyle={{ background: "#1e293b", border: "1px solid #334155", borderRadius: 8 }} />
-                    <Legend />
-                  </PieChart>
-                )}
-              </ResponsiveContainer>
+              {chartType === "heatmap" ? (
+                <div className="grid grid-cols-4 sm:grid-cols-6 gap-2">
+                  {data.map((d, i) => {
+                    const val = Number(d[yKey]) || 0;
+                    const intensity = heatmapMax ? val / heatmapMax : 0;
+                    return (
+                      <div
+                        key={i}
+                        className="rounded-lg p-3 text-xs flex flex-col items-center justify-center"
+                        style={{ backgroundColor: `rgba(99,102,241,${0.15 + intensity * 0.85})` }}
+                      >
+                        <span className="font-medium">{String(d[xKey])}</span>
+                        <span className="text-slate-200">{val}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height={380}>
+                  {renderChart()}
+                </ResponsiveContainer>
+              )}
 
-              {/* Table */}
               <div className="mt-8 overflow-x-auto rounded-xl border border-slate-800">
                 <table className="w-full text-sm">
                   <thead className="bg-slate-800/60 sticky top-0">
